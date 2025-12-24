@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 5000;
 app.use(helmet());
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.FRONTEND_URL, 'https://your-app.vercel.app'] 
+    ? ['https://jeetest.vercel.app', 'https://jeetest-frontend.vercel.app', process.env.FRONTEND_URL].filter(Boolean)
     : 'http://localhost:3000',
   credentials: true
 }));
