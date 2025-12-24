@@ -14,10 +14,15 @@ const PORT = process.env.PORT || 5000;
 
 // Security middleware
 app.use(helmet());
+// CORS configuration - Allow all Vercel domains and localhost
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://jeetest.vercel.app', 'https://jeetest-frontend.vercel.app', process.env.FRONTEND_URL].filter(Boolean)
-    : 'http://localhost:3000',
+  origin: [
+    'http://localhost:3000',
+    'https://jeetest.vercel.app',
+    'https://jeetest-frontend.vercel.app',
+    /^https:\/\/.*\.vercel\.app$/,  // Allow any Vercel subdomain
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
   credentials: true
 }));
 
@@ -59,7 +64,11 @@ app.use('/api/attempts', attemptRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 // Error handling middleware
