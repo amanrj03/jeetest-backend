@@ -188,8 +188,6 @@ const updateTest = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { name, duration, sections, isLive, isDraft } = req.body;
   
-  console.log('🔍 UpdateTest - Received isDraft:', isDraft, 'type:', typeof isDraft);
-  
   // Get existing test with all images for cleanup
   const existingTest = await retryDatabaseOperation(async () => {
     return await prisma.test.findUnique({
@@ -207,8 +205,6 @@ const updateTest = asyncHandler(async (req, res) => {
   if (!existingTest) {
     return res.status(404).json({ error: 'Test not found' });
   }
-
-  console.log('🔍 Existing test isDraft:', existingTest.isDraft);
 
   // Collect all existing image URLs for potential cleanup
   const existingImageUrls = [];
@@ -287,47 +283,50 @@ const updateTest = asyncHandler(async (req, res) => {
 
   // Determine final draft status
   const finalIsDraft = isDraft === 'true' || isDraft === true;
-  console.log('🔍 Final isDraft value:', finalIsDraft);
 
-  // Update test with retry logic
+  // Update test with retry logic - COMPLETELY REPLACE sections and questions
   const updatedTest = await retryDatabaseOperation(async () => {
-    // Delete existing sections and questions (this will trigger cascade delete)
-    await prisma.section.deleteMany({
-      where: { testId: id }
-    });
+    // Use a transaction to ensure all operations complete together
+    return await prisma.$transaction(async (tx) => {
+      // First, delete all existing sections (this will cascade delete questions)
+      const deleteResult = await tx.section.deleteMany({
+        where: { testId: id }
+      });
+      
+      // Small delay to ensure deletion is complete
+      await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Update test with new data
-    return await prisma.test.update({
-      where: { id },
-      data: {
-        name,
-        duration: parseInt(duration),
-        totalMarks,
-        isLive: isLive === 'true',
-        isDraft: finalIsDraft,
-        sections: {
-          create: processedSections
-        }
-      },
-      include: {
-        sections: {
-          include: {
-            questions: true
+      // Then create the test with new sections and questions
+      const result = await tx.test.update({
+        where: { id },
+        data: {
+          name,
+          duration: parseInt(duration),
+          totalMarks,
+          isLive: isLive === 'true',
+          isDraft: finalIsDraft,
+          sections: {
+            create: processedSections
+          }
+        },
+        include: {
+          sections: {
+            include: {
+              questions: true
+            }
           }
         }
-      }
+      });
+      
+      return result;
     });
   });
-
-  console.log('🔍 Updated test isDraft:', updatedTest.isDraft);
 
   // Clean up orphaned images (existing images not used in updated test)
   const orphanedImages = existingImageUrls.filter(url => !newImageUrls.has(url));
   if (orphanedImages.length > 0) {
-    console.log(`Cleaning up ${orphanedImages.length} orphaned images...`);
     try {
       const deleteResult = await deleteMultipleImagesFromCloudinary(orphanedImages);
-      console.log(`Cleanup result: ${deleteResult.success} deleted, ${deleteResult.failed} failed`);
     } catch (cleanupError) {
       console.error('Error cleaning up orphaned images:', cleanupError);
       // Don't fail the request if image cleanup fails
