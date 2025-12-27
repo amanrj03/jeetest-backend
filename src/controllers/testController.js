@@ -288,13 +288,30 @@ const updateTest = asyncHandler(async (req, res) => {
   const updatedTest = await retryDatabaseOperation(async () => {
     // Use a transaction to ensure all operations complete together
     return await prisma.$transaction(async (tx) => {
+      // Debug: Log before deletion
+      const beforeDelete = await tx.test.findUnique({
+        where: { id },
+        include: { sections: { include: { questions: true } } }
+      });
+      console.log('🔍 BEFORE DELETE - Sections:', beforeDelete.sections.length);
+      beforeDelete.sections.forEach((section, idx) => {
+        console.log(`🔍 BEFORE DELETE - Section ${idx}: ${section.name} - ${section.questions.length} questions`);
+      });
+      
       // First, delete all existing sections (this will cascade delete questions)
       const deleteResult = await tx.section.deleteMany({
         where: { testId: id }
       });
+      console.log('🔍 DELETE RESULT - Deleted sections:', deleteResult.count);
       
       // Small delay to ensure deletion is complete
       await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Debug: Log what we're about to create
+      console.log('🔍 ABOUT TO CREATE - Sections:', processedSections.length);
+      processedSections.forEach((section, idx) => {
+        console.log(`🔍 ABOUT TO CREATE - Section ${idx}: ${section.name} - ${section.questions.create.length} questions`);
+      });
 
       // Then create the test with new sections and questions
       const result = await tx.test.update({
@@ -316,6 +333,12 @@ const updateTest = asyncHandler(async (req, res) => {
             }
           }
         }
+      });
+      
+      // Debug: Log after creation
+      console.log('🔍 AFTER CREATE - Sections:', result.sections.length);
+      result.sections.forEach((section, idx) => {
+        console.log(`🔍 AFTER CREATE - Section ${idx}: ${section.name} - ${section.questions.length} questions`);
       });
       
       return result;
