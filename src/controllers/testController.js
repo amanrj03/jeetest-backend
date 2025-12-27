@@ -188,7 +188,7 @@ const updateTest = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { name, duration, sections, isLive, isDraft } = req.body;
   
-  // Get existing test with all images for cleanup
+  // Get existing test with all data
   const existingTest = await retryDatabaseOperation(async () => {
     return await prisma.test.findUnique({
       where: { id },
@@ -196,7 +196,8 @@ const updateTest = asyncHandler(async (req, res) => {
         sections: {
           include: {
             questions: true
-          }
+          },
+          orderBy: { order: 'asc' }
         }
       }
     });
@@ -206,15 +207,6 @@ const updateTest = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'Test not found' });
   }
 
-  // Collect all existing image URLs for potential cleanup
-  const existingImageUrls = [];
-  existingTest.sections.forEach(section => {
-    section.questions.forEach(question => {
-      if (question.questionImage) existingImageUrls.push(question.questionImage);
-      if (question.solutionImage) existingImageUrls.push(question.solutionImage);
-    });
-  });
-
   const parsedSections = JSON.parse(sections);
   
   // Calculate total marks
@@ -223,98 +215,25 @@ const updateTest = asyncHandler(async (req, res) => {
     totalMarks += section.questions.length * 4;
   });
 
-  // Collect new image URLs to preserve them from deletion
+  // Collect image URLs for cleanup
+  const existingImageUrls = new Set();
   const newImageUrls = new Set();
   
-  // Process sections and handle image uploads/preservation
-  const processedSections = parsedSections.map((section, sectionIndex) => ({
-    name: section.name,
-    questionType: section.questionType,
-    isIntegerType: section.isIntegerType || false,
-    order: sectionIndex,
-    questions: {
-      create: section.questions.map((question, questionIndex) => {
-        // Handle image uploads - only upload new files, preserve existing URLs
-        let questionImageUrl = null;
-        let solutionImageUrl = null;
-        
-        // Check for question image
-        const questionImageFile = req.files?.find(f => 
-          f.fieldname === `sections[${sectionIndex}].questions[${questionIndex}].questionImage`
-        );
-        if (questionImageFile) {
-          questionImageUrl = questionImageFile.path; // New upload
-        } else if (question.questionImage && isExistingCloudinaryUrl(question.questionImage)) {
-          questionImageUrl = question.questionImage; // Existing URL
-          newImageUrls.add(questionImageUrl); // Mark as preserved
-        }
-        
-        // Check for solution image
-        const solutionImageFile = req.files?.find(f => 
-          f.fieldname === `sections[${sectionIndex}].questions[${questionIndex}].solutionImage`
-        );
-        if (solutionImageFile) {
-          solutionImageUrl = solutionImageFile.path; // New upload
-        } else if (question.solutionImage && isExistingCloudinaryUrl(question.solutionImage)) {
-          solutionImageUrl = question.solutionImage; // Existing URL
-          newImageUrls.add(solutionImageUrl); // Mark as preserved
-        }
-
-        // Add new uploads to preserved set
-        if (questionImageUrl && !newImageUrls.has(questionImageUrl)) {
-          newImageUrls.add(questionImageUrl);
-        }
-        if (solutionImageUrl && !newImageUrls.has(solutionImageUrl)) {
-          newImageUrls.add(solutionImageUrl);
-        }
-
-        return {
-          questionNumber: questionIndex + 1,
-          questionImage: questionImageUrl,
-          solutionImage: solutionImageUrl,
-          correctOption: question.correctOption || null,
-          correctInteger: question.correctInteger ? parseInt(question.correctInteger) : null,
-          marks: 4,
-          negativeMarks: -1
-        };
-      })
-    }
-  }));
+  existingTest.sections.forEach(section => {
+    section.questions.forEach(question => {
+      if (question.questionImage) existingImageUrls.add(question.questionImage);
+      if (question.solutionImage) existingImageUrls.add(question.solutionImage);
+    });
+  });
 
   // Determine final draft status
   const finalIsDraft = isDraft === 'true' || isDraft === true;
 
-  // Update test with retry logic - COMPLETELY REPLACE sections and questions
+  // OPTIMIZED: Only update what actually changed
   const updatedTest = await retryDatabaseOperation(async () => {
-    // Use a transaction to ensure all operations complete together
     return await prisma.$transaction(async (tx) => {
-      // Debug: Log before deletion
-      const beforeDelete = await tx.test.findUnique({
-        where: { id },
-        include: { sections: { include: { questions: true } } }
-      });
-      console.log('🔍 BEFORE DELETE - Sections:', beforeDelete.sections.length);
-      beforeDelete.sections.forEach((section, idx) => {
-        console.log(`🔍 BEFORE DELETE - Section ${idx}: ${section.name} - ${section.questions.length} questions`);
-      });
-      
-      // First, delete all existing sections (this will cascade delete questions)
-      const deleteResult = await tx.section.deleteMany({
-        where: { testId: id }
-      });
-      console.log('🔍 DELETE RESULT - Deleted sections:', deleteResult.count);
-      
-      // Small delay to ensure deletion is complete
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Debug: Log what we're about to create
-      console.log('🔍 ABOUT TO CREATE - Sections:', processedSections.length);
-      processedSections.forEach((section, idx) => {
-        console.log(`🔍 ABOUT TO CREATE - Section ${idx}: ${section.name} - ${section.questions.create.length} questions`);
-      });
-
-      // Then create the test with new sections and questions
-      const result = await tx.test.update({
+      // 1. Update basic test info (always fast)
+      await tx.test.update({
         where: { id },
         data: {
           name,
@@ -322,37 +241,167 @@ const updateTest = asyncHandler(async (req, res) => {
           totalMarks,
           isLive: isLive === 'true',
           isDraft: finalIsDraft,
-          sections: {
-            create: processedSections
+        }
+      });
+
+      // 2. Get existing sections for comparison
+      const existingSections = await tx.section.findMany({
+        where: { testId: id },
+        include: { questions: true },
+        orderBy: { order: 'asc' }
+      });
+
+      // 3. Process each section incrementally
+      for (let sectionIndex = 0; sectionIndex < parsedSections.length; sectionIndex++) {
+        const newSection = parsedSections[sectionIndex];
+        const existingSection = existingSections[sectionIndex];
+
+        let currentSection;
+
+        if (existingSection) {
+          // Update existing section if changed
+          if (existingSection.name !== newSection.name || 
+              existingSection.questionType !== newSection.questionType) {
+            currentSection = await tx.section.update({
+              where: { id: existingSection.id },
+              data: {
+                name: newSection.name,
+                questionType: newSection.questionType,
+                order: sectionIndex
+              }
+            });
+          } else {
+            currentSection = existingSection;
           }
-        },
+        } else {
+          // Create new section
+          currentSection = await tx.section.create({
+            data: {
+              name: newSection.name,
+              questionType: newSection.questionType,
+              isIntegerType: newSection.isIntegerType || false,
+              order: sectionIndex,
+              testId: id
+            }
+          });
+        }
+
+        // 4. Handle questions for this section
+        const existingQuestions = existingSection?.questions || [];
+        
+        // Delete questions that no longer exist
+        if (newSection.questions.length < existingQuestions.length) {
+          const questionsToDelete = existingQuestions.slice(newSection.questions.length);
+          for (const question of questionsToDelete) {
+            await tx.question.delete({ where: { id: question.id } });
+          }
+        }
+
+        // Update/create questions
+        for (let questionIndex = 0; questionIndex < newSection.questions.length; questionIndex++) {
+          const newQuestion = newSection.questions[questionIndex];
+          const existingQuestion = existingQuestions[questionIndex];
+
+          // Handle image processing
+          let questionImageUrl = null;
+          let solutionImageUrl = null;
+          
+          // Check for new question image upload
+          const questionImageFile = req.files?.find(f => 
+            f.fieldname === `sections[${sectionIndex}].questions[${questionIndex}].questionImage`
+          );
+          if (questionImageFile) {
+            questionImageUrl = questionImageFile.path;
+          } else if (newQuestion.questionImage && isExistingCloudinaryUrl(newQuestion.questionImage)) {
+            questionImageUrl = newQuestion.questionImage;
+            newImageUrls.add(questionImageUrl);
+          }
+          
+          // Check for new solution image upload
+          const solutionImageFile = req.files?.find(f => 
+            f.fieldname === `sections[${sectionIndex}].questions[${questionIndex}].solutionImage`
+          );
+          if (solutionImageFile) {
+            solutionImageUrl = solutionImageFile.path;
+          } else if (newQuestion.solutionImage && isExistingCloudinaryUrl(newQuestion.solutionImage)) {
+            solutionImageUrl = newQuestion.solutionImage;
+            newImageUrls.add(solutionImageUrl);
+          }
+
+          // Add new uploads to preserved set
+          if (questionImageUrl && !newImageUrls.has(questionImageUrl)) {
+            newImageUrls.add(questionImageUrl);
+          }
+          if (solutionImageUrl && !newImageUrls.has(solutionImageUrl)) {
+            newImageUrls.add(solutionImageUrl);
+          }
+
+          const questionData = {
+            questionNumber: questionIndex + 1,
+            questionImage: questionImageUrl,
+            solutionImage: solutionImageUrl,
+            correctOption: newQuestion.correctOption || null,
+            correctInteger: newQuestion.correctInteger ? parseInt(newQuestion.correctInteger) : null,
+            marks: 4,
+            negativeMarks: -1
+          };
+
+          if (existingQuestion) {
+            // Update existing question only if something changed
+            const hasChanges = 
+              existingQuestion.questionImage !== questionImageUrl ||
+              existingQuestion.solutionImage !== solutionImageUrl ||
+              existingQuestion.correctOption !== questionData.correctOption ||
+              existingQuestion.correctInteger !== questionData.correctInteger;
+
+            if (hasChanges) {
+              await tx.question.update({
+                where: { id: existingQuestion.id },
+                data: questionData
+              });
+            }
+          } else {
+            // Create new question
+            await tx.question.create({
+              data: {
+                ...questionData,
+                sectionId: currentSection.id
+              }
+            });
+          }
+        }
+      }
+
+      // 5. Delete any extra sections
+      if (parsedSections.length < existingSections.length) {
+        const sectionsToDelete = existingSections.slice(parsedSections.length);
+        for (const section of sectionsToDelete) {
+          await tx.section.delete({ where: { id: section.id } });
+        }
+      }
+
+      // 6. Return the complete updated test
+      return await tx.test.findUnique({
+        where: { id },
         include: {
           sections: {
             include: {
               questions: true
-            }
+            },
+            orderBy: { order: 'asc' }
           }
         }
       });
-      
-      // Debug: Log after creation
-      console.log('🔍 AFTER CREATE - Sections:', result.sections.length);
-      result.sections.forEach((section, idx) => {
-        console.log(`🔍 AFTER CREATE - Section ${idx}: ${section.name} - ${section.questions.length} questions`);
-      });
-      
-      return result;
     });
   });
 
-  // Clean up orphaned images (existing images not used in updated test)
-  const orphanedImages = existingImageUrls.filter(url => !newImageUrls.has(url));
+  // Clean up orphaned images
+  const orphanedImages = Array.from(existingImageUrls).filter(url => !newImageUrls.has(url));
   if (orphanedImages.length > 0) {
     try {
-      const deleteResult = await deleteMultipleImagesFromCloudinary(orphanedImages);
+      await deleteMultipleImagesFromCloudinary(orphanedImages);
     } catch (cleanupError) {
       console.error('Error cleaning up orphaned images:', cleanupError);
-      // Don't fail the request if image cleanup fails
     }
   }
 
