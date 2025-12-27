@@ -8,6 +8,7 @@ require('dotenv').config();
 
 const testRoutes = require('./routes/testRoutes');
 const attemptRoutes = require('./routes/attemptRoutes');
+const { startHealthMonitoring, disconnectDatabase, healthCheckMiddleware, checkDatabaseHealth } = require('./utils/dbHealthCheck');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -40,9 +41,9 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.text({ limit: '10mb' })); // Add text parsing for sendBeacon
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.text({ limit: '50mb' })); // Add text parsing for sendBeacon
 
 // Middleware to handle sendBeacon requests
 app.use((req, res, next) => {
@@ -58,17 +59,39 @@ app.use((req, res, next) => {
 
 // Note: Images are now served from Cloudinary, no local file serving needed
 
+// Database health check middleware (before routes)
+app.use(healthCheckMiddleware);
+
 // Routes
 app.use('/api/tests', testRoutes);
 app.use('/api/attempts', attemptRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
-  });
+// Health check endpoint
+app.get('/api/health', async (req, res) => {
+  try {
+    const dbHealth = await checkDatabaseHealth();
+    res.json({ 
+      status: dbHealth.healthy ? 'OK' : 'DEGRADED',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        healthy: dbHealth.healthy,
+        latency: dbHealth.latency,
+        lastCheck: dbHealth.lastCheck,
+        error: dbHealth.error
+      }
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'ERROR',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        healthy: false,
+        error: error.message
+      }
+    });
+  }
 });
 
 // Error handling middleware
@@ -88,4 +111,32 @@ app.use('*', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  
+  // Start database health monitoring
+  startHealthMonitoring();
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  await disconnectDatabase();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('🛑 SIGINT received, shutting down gracefully...');
+  await disconnectDatabase();
+  process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });

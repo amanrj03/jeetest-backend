@@ -16,7 +16,7 @@ const router = express.Router();
 // Configure multer with Cloudinary storage
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for better quality
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit for large test uploads
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const mimetype = allowedTypes.test(file.mimetype);
