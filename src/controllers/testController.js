@@ -95,8 +95,11 @@ const getAllTests = asyncHandler(async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
-          }
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
+          },
+          orderBy: { order: 'asc' }
         },
         attempts: true
       },
@@ -119,8 +122,11 @@ const getLiveTests = asyncHandler(async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
-          }
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
+          },
+          orderBy: { order: 'asc' }
         }
       },
       orderBy: {
@@ -142,7 +148,9 @@ const getTestById = asyncHandler(async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
           },
           orderBy: {
             order: 'asc'
@@ -195,7 +203,9 @@ const updateTest = asyncHandler(async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
           },
           orderBy: { order: 'asc' }
         }
@@ -247,7 +257,11 @@ const updateTest = asyncHandler(async (req, res) => {
       // 2. Get existing sections for comparison
       const existingSections = await tx.section.findMany({
         where: { testId: id },
-        include: { questions: true },
+        include: { 
+          questions: {
+            orderBy: { questionNumber: 'asc' }
+          }
+        },
         orderBy: { order: 'asc' }
       });
 
@@ -337,7 +351,7 @@ const updateTest = asyncHandler(async (req, res) => {
           }
 
           const questionData = {
-            questionNumber: questionIndex + 1,
+            questionNumber: questionIndex + 1, // CRITICAL: Always maintain correct order
             questionImage: questionImageUrl,
             solutionImage: solutionImageUrl,
             correctOption: newQuestion.correctOption || null,
@@ -347,19 +361,12 @@ const updateTest = asyncHandler(async (req, res) => {
           };
 
           if (existingQuestion) {
-            // Update existing question only if something changed
-            const hasChanges = 
-              existingQuestion.questionImage !== questionImageUrl ||
-              existingQuestion.solutionImage !== solutionImageUrl ||
-              existingQuestion.correctOption !== questionData.correctOption ||
-              existingQuestion.correctInteger !== questionData.correctInteger;
-
-            if (hasChanges) {
-              await tx.question.update({
-                where: { id: existingQuestion.id },
-                data: questionData
-              });
-            }
+            // ALWAYS update existing question to ensure correct order and data
+            // Don't check for changes - just update to maintain consistency
+            await tx.question.update({
+              where: { id: existingQuestion.id },
+              data: questionData
+            });
           } else {
             // Create new question
             await tx.question.create({
@@ -380,13 +387,15 @@ const updateTest = asyncHandler(async (req, res) => {
         }
       }
 
-      // 6. Return the complete updated test
+      // 6. Return the complete updated test with proper ordering
       return await tx.test.findUnique({
         where: { id },
         include: {
           sections: {
             include: {
-              questions: true
+              questions: {
+                orderBy: { questionNumber: 'asc' } // CRITICAL: Order by question number
+              }
             },
             orderBy: { order: 'asc' }
           }
