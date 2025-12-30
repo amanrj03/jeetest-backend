@@ -421,7 +421,7 @@ const updateTest = asyncHandler(async (req, res) => {
 const deleteTest = asyncHandler(async (req, res) => {
   const { id } = req.params;
   
-  // Get test with all images before deletion
+  // Get test with all related data before deletion
   const testToDelete = await retryDatabaseOperation(async () => {
     return await prisma.test.findUnique({
       where: { id },
@@ -429,6 +429,11 @@ const deleteTest = asyncHandler(async (req, res) => {
         sections: {
           include: {
             questions: true
+          }
+        },
+        attempts: {
+          include: {
+            answers: true
           }
         }
       }
@@ -439,16 +444,32 @@ const deleteTest = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'Test not found' });
   }
 
+  // Collect statistics before deletion
+  const stats = {
+    testName: testToDelete.name,
+    sectionsCount: testToDelete.sections.length,
+    questionsCount: testToDelete.sections.reduce((total, section) => total + section.questions.length, 0),
+    attemptsCount: testToDelete.attempts.length,
+    answersCount: testToDelete.attempts.reduce((total, attempt) => total + attempt.answers.length, 0),
+    imagesCount: 0
+  };
+
   // Collect all image URLs for deletion
   const imageUrls = [];
   testToDelete.sections.forEach(section => {
     section.questions.forEach(question => {
-      if (question.questionImage) imageUrls.push(question.questionImage);
-      if (question.solutionImage) imageUrls.push(question.solutionImage);
+      if (question.questionImage) {
+        imageUrls.push(question.questionImage);
+        stats.imagesCount++;
+      }
+      if (question.solutionImage) {
+        imageUrls.push(question.solutionImage);
+        stats.imagesCount++;
+      }
     });
   });
 
-  // Delete test from database (cascade will delete sections and questions)
+  // Delete test from database (cascade will delete all related data)
   await retryDatabaseOperation(async () => {
     return await prisma.test.delete({
       where: { id }
@@ -458,10 +479,8 @@ const deleteTest = asyncHandler(async (req, res) => {
   // Delete all associated images from Cloudinary
   let deleteResult = { success: 0, failed: 0 };
   if (imageUrls.length > 0) {
-    console.log(`Deleting ${imageUrls.length} images from Cloudinary for test: ${testToDelete.name}`);
     try {
       deleteResult = await deleteMultipleImagesFromCloudinary(imageUrls);
-      console.log(`Image deletion result: ${deleteResult.success} deleted, ${deleteResult.failed} failed`);
     } catch (imageError) {
       console.error('Error deleting images from Cloudinary:', imageError);
       // Don't fail the request if image deletion fails
@@ -469,12 +488,19 @@ const deleteTest = asyncHandler(async (req, res) => {
   }
 
   res.json({ 
-    message: 'Test deleted successfully',
-    imagesDeleted: imageUrls.length > 0 ? {
-      total: imageUrls.length,
-      success: deleteResult.success,
-      failed: deleteResult.failed
-    } : null
+    message: 'Test and all related data deleted successfully',
+    deletedData: {
+      testName: stats.testName,
+      sections: stats.sectionsCount,
+      questions: stats.questionsCount,
+      studentAttempts: stats.attemptsCount,
+      studentAnswers: stats.answersCount,
+      images: {
+        total: stats.imagesCount,
+        deleted: deleteResult.success,
+        failed: deleteResult.failed
+      }
+    }
   });
 });
 
