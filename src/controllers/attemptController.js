@@ -575,10 +575,7 @@ const getTimeAnalytics = async (req, res) => {
   try {
     const { id: attemptId } = req.params;
     
-    console.log('🔍 Getting time analytics for attemptId:', attemptId);
-    
     if (!attemptId) {
-      console.log('❌ No attemptId provided');
       return res.status(400).json({ error: 'Attempt ID is required' });
     }
 

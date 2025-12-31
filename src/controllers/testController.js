@@ -13,7 +13,7 @@ const prisma = new PrismaClient();
 
 // Create a new test
 const createTest = asyncHandler(async (req, res) => {
-  const { name, duration, sections, isDraft } = req.body;
+  const { name, duration, sections, isDraft, enableGraphicalAnalysis } = req.body;
   const parsedSections = JSON.parse(sections);
   
   // Calculate total marks
@@ -29,6 +29,7 @@ const createTest = asyncHandler(async (req, res) => {
         duration: parseInt(duration),
         totalMarks,
         isDraft: isDraft === 'true' || isDraft === true,
+        enableGraphicalAnalysis: enableGraphicalAnalysis === 'true' || enableGraphicalAnalysis === true,
         sections: {
           create: parsedSections.map((section, sectionIndex) => ({
             name: section.name,
@@ -194,7 +195,7 @@ const toggleTestLive = asyncHandler(async (req, res) => {
 // Update test
 const updateTest = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name, duration, sections, isLive, isDraft } = req.body;
+  const { name, duration, sections, isLive, isDraft, enableGraphicalAnalysis } = req.body;
   
   // Get existing test with all data
   const existingTest = await retryDatabaseOperation(async () => {
@@ -251,6 +252,7 @@ const updateTest = asyncHandler(async (req, res) => {
           totalMarks,
           isLive: isLive === 'true',
           isDraft: finalIsDraft,
+          enableGraphicalAnalysis: enableGraphicalAnalysis === 'true' || enableGraphicalAnalysis === true,
         }
       });
 

@@ -13,6 +13,7 @@ model Test {
   duration   Int
   totalMarks Int           @default(0)
   isLive     Boolean       @default(false)
+  enableGraphicalAnalysis Boolean @default(true)
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
   isDraft    Boolean       @default(false)
