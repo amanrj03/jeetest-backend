@@ -8,85 +8,84 @@ datasource db {
 }
 
 model Test {
-  id          String   @id @default(cuid())
-  name        String
-  duration    Int      // in minutes
-  totalMarks  Int      @default(0)
-  isLive      Boolean  @default(false)
-  isDraft     Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  sections    Section[]
-  attempts    TestAttempt[]
-  
+  id         String        @id @default(cuid())
+  name       String
+  duration   Int
+  totalMarks Int           @default(0)
+  isLive     Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  isDraft    Boolean       @default(false)
+  sections   Section[]
+  attempts   TestAttempt[]
+
   @@map("tests")
 }
 
 model Section {
-  id           String      @id @default(cuid())
-  name         String
-  questionType QuestionType
-  isIntegerType Boolean    @default(false)
-  order        Int
-  testId       String
-  
-  test         Test        @relation(fields: [testId], references: [id], onDelete: Cascade)
-  questions    Question[]
-  
+  id            String       @id @default(cuid())
+  name          String
+  questionType  QuestionType
+  isIntegerType Boolean      @default(false)
+  order         Int
+  testId        String
+  questions     Question[]
+  test          Test         @relation(fields: [testId], references: [id], onDelete: Cascade)
+
   @@map("sections")
 }
 
 model Question {
-  id              String   @id @default(cuid())
-  questionNumber  Int
-  questionImage   String?
-  solutionImage   String?
-  correctOption   String?  // A, B, C, D for MCQ
-  correctInteger  Int?     // for integer type questions
-  marks           Int      @default(4)
-  negativeMarks   Int      @default(-1)
-  sectionId       String
-  
-  section         Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  answers         Answer[]
-  
+  id             String   @id @default(cuid())
+  questionNumber Int
+  questionImage  String?
+  solutionImage  String?
+  correctOption  String?
+  correctInteger Int?
+  marks          Int      @default(4)
+  negativeMarks  Int      @default(-1)
+  sectionId      String
+  answers        Answer[]
+  section        Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
   @@map("questions")
 }
 
 model TestAttempt {
-  id           String   @id @default(cuid())
-  candidateName String
-  candidateImage String?
-  startTime    DateTime @default(now())
-  endTime      DateTime?
-  totalMarks   Int      @default(0)
-  isCompleted  Boolean  @default(false)
-  warningCount Int      @default(0)
-  needsResume  Boolean  @default(false)
-  canResume    Boolean  @default(false)
+  id                String    @id @default(cuid())
+  candidateName     String
+  candidateImage    String?
+  startTime         DateTime  @default(now())
+  endTime           DateTime?
+  totalMarks        Int       @default(0)
+  isCompleted       Boolean   @default(false)
+  warningCount      Int       @default(0)
+  testId            String
+  canResume         Boolean   @default(false)
+  needsResume       Boolean   @default(false)
   resumeRequestedAt DateTime?
-  testId       String
-  
-  test         Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
-  answers      Answer[]
-  
+  answers           Answer[]
+  test              Test      @relation(fields: [testId], references: [id], onDelete: Cascade)
+
   @@map("test_attempts")
 }
 
 model Answer {
-  id              String       @id @default(cuid())
-  selectedOption  String?      // A, B, C, D for MCQ
-  integerAnswer   Int?         // for integer type
-  status          AnswerStatus @default(NOT_VISITED)
-  isCorrect       Boolean?
-  marksAwarded    Int          @default(0)
-  attemptId       String
-  questionId      String
-  
-  attempt         TestAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-  question        Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  
+  id             String       @id @default(cuid())
+  selectedOption String?
+  integerAnswer  Int?
+  status         AnswerStatus @default(NOT_VISITED)
+  isCorrect      Boolean?
+  marksAwarded   Int          @default(0)
+  attemptId      String
+  questionId     String
+  firstVisitTime DateTime?
+  lastVisitTime  DateTime?
+  timeSpent      Int          @default(0)
+  visitCount     Int          @default(0)
+  attempt        TestAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question       Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
   @@unique([attemptId, questionId])
   @@map("answers")
 }

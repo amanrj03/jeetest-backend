@@ -8,7 +8,10 @@ const {
   updateWarningCount,
   requestResume,
   allowResume,
-  getResumeRequests
+  getResumeRequests,
+  updateQuestionTime,
+  syncTimeData,
+  getTimeAnalytics
 } = require('../controllers/attemptController');
 
 const router = express.Router();
@@ -18,6 +21,14 @@ router.post('/start', startTestAttempt);
 router.post('/sync', syncAnswers);
 router.post('/submit', submitTest);
 router.post('/warning', updateWarningCount);
+
+// Time tracking routes
+router.put('/:id/question-time', updateQuestionTime);
+router.put('/:id/sync-times', syncTimeData);
+router.get('/:id/time-analytics', (req, res, next) => {
+  console.log('🎯 Time analytics route hit with id:', req.params.id);
+  getTimeAnalytics(req, res, next);
+});
 
 // Resume permission routes (must be before /:id route)
 router.post('/request-resume', requestResume);

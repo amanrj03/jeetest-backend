@@ -453,3 +453,231 @@ module.exports = {
   allowResume,
   getResumeRequests
 };
+// Update question time tracking
+const updateQuestionTime = async (req, res) => {
+  try {
+    const { id: attemptId } = req.params;
+    const { questionId, timeSpent, action } = req.body;
+
+    // Validate input
+    if (!questionId || typeof timeSpent !== 'number' || timeSpent < 0) {
+      return res.status(400).json({ error: 'Invalid time tracking data' });
+    }
+
+    // Find the answer record
+    let answer = await prisma.answer.findUnique({
+      where: {
+        attemptId_questionId: {
+          attemptId,
+          questionId
+        }
+      }
+    });
+
+    if (!answer) {
+      return res.status(404).json({ error: 'Answer record not found' });
+    }
+
+    const now = new Date();
+    const updateData = {
+      timeSpent: answer.timeSpent + timeSpent,
+      lastVisitTime: now
+    };
+
+    // If this is the first visit, set firstVisitTime and increment visitCount
+    if (!answer.firstVisitTime) {
+      updateData.firstVisitTime = now;
+      updateData.visitCount = 1;
+    } else if (action === 'visit') {
+      // Only increment visit count for new visits, not continuous time updates
+      updateData.visitCount = answer.visitCount + 1;
+    }
+
+    // Update the answer with new time data
+    const updatedAnswer = await prisma.answer.update({
+      where: {
+        attemptId_questionId: {
+          attemptId,
+          questionId
+        }
+      },
+      data: updateData
+    });
+
+    res.json({ 
+      success: true, 
+      timeSpent: updatedAnswer.timeSpent,
+      visitCount: updatedAnswer.visitCount
+    });
+
+  } catch (error) {
+    console.error('Error updating question time:', error);
+    res.status(500).json({ error: 'Failed to update question time' });
+  }
+};
+
+// Bulk sync time data for multiple questions
+const syncTimeData = async (req, res) => {
+  try {
+    const { id: attemptId } = req.params;
+    const { questionTimes } = req.body; // { questionId: timeSpent, ... }
+
+    if (!questionTimes || typeof questionTimes !== 'object') {
+      return res.status(400).json({ error: 'Invalid time data format' });
+    }
+
+    const now = new Date();
+    const updates = [];
+
+    // Prepare bulk update operations
+    for (const [questionId, timeSpent] of Object.entries(questionTimes)) {
+      if (typeof timeSpent === 'number' && timeSpent > 0) {
+        updates.push(
+          prisma.answer.upsert({
+            where: {
+              attemptId_questionId: {
+                attemptId,
+                questionId
+              }
+            },
+            update: {
+              timeSpent: {
+                increment: timeSpent
+              },
+              lastVisitTime: now
+            },
+            create: {
+              attemptId,
+              questionId,
+              timeSpent,
+              visitCount: 1,
+              firstVisitTime: now,
+              lastVisitTime: now
+            }
+          })
+        );
+      }
+    }
+
+    // Execute all updates in a transaction
+    await prisma.$transaction(updates);
+
+    res.json({ success: true, updatedQuestions: Object.keys(questionTimes).length });
+
+  } catch (error) {
+    console.error('Error syncing time data:', error);
+    res.status(500).json({ error: 'Failed to sync time data' });
+  }
+};
+
+// Get time analytics for an attempt
+const getTimeAnalytics = async (req, res) => {
+  try {
+    const { id: attemptId } = req.params;
+    
+    console.log('🔍 Getting time analytics for attemptId:', attemptId);
+    
+    if (!attemptId) {
+      console.log('❌ No attemptId provided');
+      return res.status(400).json({ error: 'Attempt ID is required' });
+    }
+
+    const attempt = await prisma.testAttempt.findUnique({
+      where: { id: attemptId },
+      include: {
+        test: {
+          include: {
+            sections: {
+              include: {
+                questions: {
+                  orderBy: { questionNumber: 'asc' }
+                }
+              },
+              orderBy: { order: 'asc' }
+            }
+          }
+        },
+        answers: {
+          include: {
+            question: {
+              include: {
+                section: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ error: 'Test attempt not found' });
+    }
+
+    // Calculate section-wise time analytics
+    const sectionAnalytics = attempt.test.sections.map(section => {
+      const sectionAnswers = attempt.answers.filter(
+        answer => answer.question.sectionId === section.id
+      );
+
+      const totalTime = sectionAnswers.reduce((sum, answer) => sum + answer.timeSpent, 0);
+      const totalVisits = sectionAnswers.reduce((sum, answer) => sum + answer.visitCount, 0);
+      const questionsAttempted = sectionAnswers.filter(answer => answer.timeSpent > 0).length;
+
+      return {
+        sectionId: section.id,
+        sectionName: section.name,
+        totalTime,
+        totalVisits,
+        questionsAttempted,
+        totalQuestions: section.questions.length,
+        averageTimePerQuestion: questionsAttempted > 0 ? Math.round(totalTime / questionsAttempted) : 0
+      };
+    });
+
+    // Calculate question-wise analytics
+    const questionAnalytics = attempt.answers.map(answer => ({
+      questionId: answer.questionId,
+      questionNumber: answer.question.questionNumber,
+      sectionName: answer.question.section.name,
+      timeSpent: answer.timeSpent,
+      visitCount: answer.visitCount,
+      firstVisitTime: answer.firstVisitTime,
+      lastVisitTime: answer.lastVisitTime,
+      isCorrect: answer.isCorrect,
+      marksAwarded: answer.marksAwarded
+    }));
+
+    // Calculate overall analytics
+    const totalTestTime = attempt.answers.reduce((sum, answer) => sum + answer.timeSpent, 0);
+    const totalVisits = attempt.answers.reduce((sum, answer) => sum + answer.visitCount, 0);
+
+    res.json({
+      attemptId,
+      candidateName: attempt.candidateName,
+      testName: attempt.test.name,
+      totalTestTime,
+      totalVisits,
+      sectionAnalytics,
+      questionAnalytics
+    });
+
+  } catch (error) {
+    console.error('Error getting time analytics:', error);
+    res.status(500).json({ error: 'Failed to get time analytics' });
+  }
+};
+
+module.exports = {
+  startTestAttempt,
+  syncAnswers,
+  submitTest,
+  updateWarningCount,
+  getAttemptById,
+  getUserAttempts,
+  requestResume,
+  allowResume,
+  getResumeRequests,
+  updateQuestionTime,
+  syncTimeData,
+  getTimeAnalytics
+};
