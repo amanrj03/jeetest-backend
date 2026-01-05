@@ -79,8 +79,11 @@ const createTest = asyncHandler(async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
-          }
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
+          },
+          orderBy: { order: 'asc' }
         }
       }
     });
@@ -182,8 +185,11 @@ const toggleTestLive = asyncHandler(async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
-          }
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
+          },
+          orderBy: { order: 'asc' }
         }
       }
     });
@@ -430,8 +436,11 @@ const deleteTest = asyncHandler(async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
-          }
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
+          },
+          orderBy: { order: 'asc' }
         },
         attempts: {
           include: {

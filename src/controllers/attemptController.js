@@ -12,8 +12,11 @@ const startTestAttempt = async (req, res) => {
       include: {
         sections: {
           include: {
-            questions: true
-          }
+            questions: {
+              orderBy: { questionNumber: 'asc' }
+            }
+          },
+          orderBy: { order: 'asc' }
         }
       }
     });
@@ -74,7 +77,9 @@ const startTestAttempt = async (req, res) => {
           include: {
             sections: {
               include: {
-                questions: true
+                questions: {
+                  orderBy: { questionNumber: 'asc' }
+                }
               },
               orderBy: {
                 order: 'asc'
@@ -141,8 +146,11 @@ const submitTest = async (req, res) => {
           include: {
             sections: {
               include: {
-                questions: true
-              }
+                questions: {
+                  orderBy: { questionNumber: 'asc' }
+                }
+              },
+              orderBy: { order: 'asc' }
             }
           }
         },
@@ -304,7 +312,9 @@ const getAttemptById = async (req, res) => {
           include: {
             sections: {
               include: {
-                questions: true
+                questions: {
+                  orderBy: { questionNumber: 'asc' }
+                }
               },
               orderBy: {
                 order: 'asc'
@@ -350,8 +360,11 @@ const getUserAttempts = async (req, res) => {
           include: {
             sections: {
               include: {
-                questions: true
-              }
+                questions: {
+                  orderBy: { questionNumber: 'asc' }
+                }
+              },
+              orderBy: { order: 'asc' }
             }
           }
         },
