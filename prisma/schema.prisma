@@ -37,17 +37,21 @@ model Section {
 }
 
 model Question {
-  id             String   @id @default(cuid())
-  questionNumber Int
-  questionImage  String?
-  solutionImage  String?
-  correctOption  String?
-  correctInteger Int?
-  marks          Int      @default(4)
-  negativeMarks  Int      @default(-1)
-  sectionId      String
-  answers        Answer[]
-  section        Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  id                String   @id @default(cuid())
+  questionNumber    Int
+  questionImage     String?
+  solutionImage     String?
+  correctOption     String?
+  correctOptions    String?  // For multiple correct - comma separated
+  correctInteger    Int?
+  marks             Int      @default(4)
+  negativeMarks     Int      @default(-1)
+  partialMarks3     Int      @default(0)  // For multiple correct partial marking
+  partialMarks2     Int      @default(0)  // For multiple correct partial marking
+  partialMarks1     Int      @default(0)  // For multiple correct partial marking
+  sectionId         String
+  answers           Answer[]
+  section           Section  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
   @@map("questions")
 }
@@ -72,28 +76,31 @@ model TestAttempt {
 }
 
 model Answer {
-  id             String       @id @default(cuid())
-  selectedOption String?
-  integerAnswer  Int?
-  status         AnswerStatus @default(NOT_VISITED)
-  isCorrect      Boolean?
-  marksAwarded   Int          @default(0)
-  attemptId      String
-  questionId     String
-  firstVisitTime DateTime?
-  lastVisitTime  DateTime?
-  timeSpent      Int          @default(0)
-  visitCount     Int          @default(0)
-  attempt        TestAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-  question       Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  id              String       @id @default(cuid())
+  selectedOption  String?
+  selectedOptions String?      // For multiple correct - comma separated
+  integerAnswer   Int?
+  status          AnswerStatus @default(NOT_VISITED)
+  isCorrect       Boolean?
+  marksAwarded    Int          @default(0)
+  attemptId       String
+  questionId      String
+  firstVisitTime  DateTime?
+  lastVisitTime   DateTime?
+  timeSpent       Int          @default(0)
+  visitCount      Int          @default(0)
+  attempt         TestAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question        Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@unique([attemptId, questionId])
   @@map("answers")
 }
 
 enum QuestionType {
-  MCQ
+  SINGLE_CORRECT
   INTEGER
+  MULTIPLE_CORRECT
+  MATRIX_MATCH
 }
 
 enum AnswerStatus {

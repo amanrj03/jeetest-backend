@@ -1,6 +1,56 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+// Helper function to calculate marks for multiple correct questions
+const calculateMultipleCorrectMarks = (selectedOptions, correctOptions, questionMarks = 4, questionNegativeMarks = -2) => {
+  // Parse to arrays if strings
+  const selected = selectedOptions 
+    ? (typeof selectedOptions === 'string' ? selectedOptions.split(',').map(s => s.trim()) : selectedOptions)
+    : [];
+  const correct = correctOptions 
+    ? (typeof correctOptions === 'string' ? correctOptions.split(',').map(s => s.trim()) : correctOptions)
+    : [];
+  
+  // Not attempted
+  if (selected.length === 0) return { marks: 0, isCorrect: null };
+  
+  // Count how many selected options are correct
+  const correctCount = selected.filter(opt => correct.includes(opt)).length;
+  
+  // Check if any wrong option was selected
+  const hasWrongOption = selected.some(opt => !correct.includes(opt));
+  
+  // If any wrong option selected, apply negative marks
+  if (hasWrongOption) {
+    return { marks: questionNegativeMarks ?? -2, isCorrect: false };
+  }
+  
+  // All correct options selected - full marks
+  if (correctCount === correct.length) return { marks: questionMarks, isCorrect: true };
+  
+  // Partial marks based on correct count
+  // Calculate partial marks proportionally
+  const partialMarkRatio = correctCount / correct.length;
+  
+  // If all 4 options are correct and 3 selected (75%)
+  if (correct.length === 4 && correctCount === 3) {
+    return { marks: Math.round(questionMarks * 0.75), isCorrect: false };
+  }
+  
+  // If 3 or more correct and 2 selected (both correct) - 50%
+  if (correct.length >= 3 && correctCount === 2) {
+    return { marks: Math.round(questionMarks * 0.5), isCorrect: false };
+  }
+  
+  // If 2 or more correct and 1 selected (correct) - 25%
+  if (correct.length >= 2 && correctCount === 1) {
+    return { marks: Math.round(questionMarks * 0.25), isCorrect: false };
+  }
+  
+  // Shouldn't reach here, but safe default
+  return { marks: questionNegativeMarks ?? -2, isCorrect: false };
+};
+
 // Start a test attempt
 const startTestAttempt = async (req, res) => {
   try {
@@ -118,6 +168,7 @@ const syncAnswers = async (req, res) => {
         },
         data: {
           selectedOption: answer.selectedOption,
+          selectedOptions: answer.selectedOptions ? (Array.isArray(answer.selectedOptions) ? answer.selectedOptions.join(',') : answer.selectedOptions) : null,
           integerAnswer: answer.integerAnswer !== null && answer.integerAnswer !== undefined && answer.integerAnswer !== '' ? parseInt(answer.integerAnswer) : null,
           status: answer.status
         }
@@ -177,18 +228,54 @@ const submitTest = async (req, res) => {
 
       if (!question) continue;
 
+      // Get the section to determine question type
+      const section = attempt.test.sections.find(s => 
+        s.questions.some(q => q.id === answer.questionId)
+      );
+
       let isCorrect = null; // null = unattempted, true = correct, false = wrong
       let marksAwarded = 0;
 
       if (answer.status === 'ANSWERED' || answer.status === 'MARKED_FOR_REVIEW') {
-        // Check if the answer is correct
-        if (question.correctOption && question.correctOption !== '' && answer.selectedOption === question.correctOption) {
+        // Handle MULTIPLE_CORRECT type with partial marking
+        if (section?.questionType === 'MULTIPLE_CORRECT' && question.correctOptions) {
+          const result = calculateMultipleCorrectMarks(
+            answer.selectedOptions, 
+            question.correctOptions,
+            question.marks,
+            question.negativeMarks
+          );
+          isCorrect = result.isCorrect;
+          marksAwarded = result.marks;
+        }
+        // Handle SINGLE_CORRECT and MATRIX_MATCH (same logic)
+        else if ((section?.questionType === 'SINGLE_CORRECT' || section?.questionType === 'MATRIX_MATCH') && question.correctOption) {
+          if (answer.selectedOption === question.correctOption) {
+            isCorrect = true;
+            marksAwarded = question.marks;
+          } else if (answer.selectedOption) {
+            isCorrect = false;
+            marksAwarded = question.negativeMarks;
+          }
+        }
+        // Handle INTEGER type
+        else if (section?.questionType === 'INTEGER' && question.correctInteger !== null && question.correctInteger !== undefined) {
+          if (answer.integerAnswer === question.correctInteger) {
+            isCorrect = true;
+            marksAwarded = question.marks;
+          } else if (answer.integerAnswer !== null && answer.integerAnswer !== undefined) {
+            isCorrect = false;
+            marksAwarded = question.negativeMarks;
+          }
+        }
+        // Fallback for backward compatibility (old MCQ type)
+        else if (question.correctOption && answer.selectedOption === question.correctOption) {
           isCorrect = true;
           marksAwarded = question.marks;
         } else if (question.correctInteger !== null && question.correctInteger !== undefined && answer.integerAnswer === question.correctInteger) {
           isCorrect = true;
           marksAwarded = question.marks;
-        } else if (answer.selectedOption || (answer.integerAnswer !== null && answer.integerAnswer !== undefined)) {
+        } else if (answer.selectedOption || answer.selectedOptions || (answer.integerAnswer !== null && answer.integerAnswer !== undefined)) {
           // Student provided an answer but it's wrong
           isCorrect = false;
           marksAwarded = question.negativeMarks;
@@ -202,6 +289,7 @@ const submitTest = async (req, res) => {
         attemptId,
         questionId: answer.questionId,
         selectedOption: answer.selectedOption,
+        selectedOptions: answer.selectedOptions ? (Array.isArray(answer.selectedOptions) ? answer.selectedOptions.join(',') : answer.selectedOptions) : null,
         integerAnswer: answer.integerAnswer !== null && answer.integerAnswer !== undefined && answer.integerAnswer !== '' ? parseInt(answer.integerAnswer) : null,
         status: answer.status,
         isCorrect,
@@ -220,6 +308,7 @@ const submitTest = async (req, res) => {
         },
         data: {
           selectedOption: answer.selectedOption,
+          selectedOptions: answer.selectedOptions,
           integerAnswer: answer.integerAnswer,
           status: answer.status,
           isCorrect: answer.isCorrect,
@@ -677,6 +766,171 @@ const getTimeAnalytics = async (req, res) => {
   }
 };
 
+// Recalculate marks for a completed attempt (for teachers)
+const recalculateMarks = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+
+    // Get the attempt with all details
+    const attempt = await prisma.testAttempt.findUnique({
+      where: { id: attemptId },
+      include: {
+        test: {
+          include: {
+            sections: {
+              include: {
+                questions: {
+                  orderBy: { questionNumber: 'asc' }
+                }
+              },
+              orderBy: { order: 'asc' }
+            }
+          }
+        },
+        answers: {
+          include: {
+            question: true
+          }
+        }
+      }
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ error: 'Test attempt not found' });
+    }
+
+    if (!attempt.isCompleted) {
+      return res.status(400).json({ error: 'Cannot recalculate marks for incomplete attempt' });
+    }
+
+    // Recalculate marks for all answers
+    let totalMarks = 0;
+    const updatedAnswers = [];
+
+    for (const answer of attempt.answers) {
+      const question = attempt.test.sections
+        .flatMap(s => s.questions)
+        .find(q => q.id === answer.questionId);
+
+      if (!question) continue;
+
+      // Get the section to determine question type
+      const section = attempt.test.sections.find(s => 
+        s.questions.some(q => q.id === answer.questionId)
+      );
+
+      let isCorrect = null; // null = unattempted, true = correct, false = wrong
+      let marksAwarded = 0;
+
+      // Only calculate if question was attempted
+      if (answer.status === 'ANSWERED' || answer.status === 'MARKED_FOR_REVIEW') {
+        // Handle MULTIPLE_CORRECT type with partial marking
+        if (section?.questionType === 'MULTIPLE_CORRECT' && question.correctOptions) {
+          const result = calculateMultipleCorrectMarks(
+            answer.selectedOptions, 
+            question.correctOptions,
+            question.marks,
+            question.negativeMarks
+          );
+          isCorrect = result.isCorrect;
+          marksAwarded = result.marks;
+        }
+        // Handle SINGLE_CORRECT and MATRIX_MATCH (same logic)
+        else if ((section?.questionType === 'SINGLE_CORRECT' || section?.questionType === 'MATRIX_MATCH') && question.correctOption) {
+          if (answer.selectedOption === question.correctOption) {
+            isCorrect = true;
+            marksAwarded = question.marks;
+          } else if (answer.selectedOption) {
+            isCorrect = false;
+            marksAwarded = question.negativeMarks;
+          }
+        }
+        // Handle INTEGER type
+        else if (section?.questionType === 'INTEGER' && question.correctInteger !== null && question.correctInteger !== undefined) {
+          if (answer.integerAnswer === question.correctInteger) {
+            isCorrect = true;
+            marksAwarded = question.marks;
+          } else if (answer.integerAnswer !== null && answer.integerAnswer !== undefined) {
+            isCorrect = false;
+            marksAwarded = question.negativeMarks;
+          }
+        }
+        // Fallback for backward compatibility
+        else if (question.correctOption && answer.selectedOption === question.correctOption) {
+          isCorrect = true;
+          marksAwarded = question.marks;
+        } else if (question.correctInteger !== null && question.correctInteger !== undefined && answer.integerAnswer === question.correctInteger) {
+          isCorrect = true;
+          marksAwarded = question.marks;
+        } else if (answer.selectedOption || answer.selectedOptions || (answer.integerAnswer !== null && answer.integerAnswer !== undefined)) {
+          isCorrect = false;
+          marksAwarded = question.negativeMarks;
+        }
+      }
+
+      totalMarks += marksAwarded;
+
+      updatedAnswers.push({
+        questionId: answer.questionId,
+        isCorrect,
+        marksAwarded
+      });
+    }
+
+    // Update all answers with recalculated marks
+    const updatePromises = updatedAnswers.map(answer =>
+      prisma.answer.update({
+        where: {
+          attemptId_questionId: {
+            attemptId,
+            questionId: answer.questionId
+          }
+        },
+        data: {
+          isCorrect: answer.isCorrect,
+          marksAwarded: answer.marksAwarded
+        }
+      })
+    );
+
+    await Promise.all(updatePromises);
+
+    // Update total marks in attempt
+    const updatedAttempt = await prisma.testAttempt.update({
+      where: { id: attemptId },
+      data: {
+        totalMarks
+      },
+      include: {
+        test: true,
+        answers: {
+          include: {
+            question: {
+              include: {
+                section: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Marks recalculated successfully',
+      oldTotalMarks: attempt.totalMarks,
+      newTotalMarks: totalMarks,
+      difference: totalMarks - attempt.totalMarks,
+      updatedAnswers: updatedAnswers.length,
+      attempt: updatedAttempt
+    });
+
+  } catch (error) {
+    console.error('Error recalculating marks:', error);
+    res.status(500).json({ error: 'Failed to recalculate marks' });
+  }
+};
+
 module.exports = {
   startTestAttempt,
   syncAnswers,
@@ -689,5 +943,6 @@ module.exports = {
   getResumeRequests,
   updateQuestionTime,
   syncTimeData,
-  getTimeAnalytics
+  getTimeAnalytics,
+  recalculateMarks
 };

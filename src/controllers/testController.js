@@ -16,10 +16,13 @@ const createTest = asyncHandler(async (req, res) => {
   const { name, duration, sections, isDraft, enableGraphicalAnalysis } = req.body;
   const parsedSections = JSON.parse(sections);
   
+  console.log('📥 Received sections data:', JSON.stringify(parsedSections, null, 2));
+  
   // Calculate total marks
   let totalMarks = 0;
   parsedSections.forEach(section => {
-    totalMarks += section.questions.length * 4; // 4 marks per question
+    const sectionMarks = section.marks || 4; // Default to 4 if not specified
+    totalMarks += section.questions.length * sectionMarks;
   });
   
   const test = await retryDatabaseOperation(async () => {
@@ -67,9 +70,10 @@ const createTest = asyncHandler(async (req, res) => {
                   questionImage: questionImageUrl,
                   solutionImage: solutionImageUrl,
                   correctOption: question.correctOption || null,
+                  correctOptions: question.correctOptions ? (Array.isArray(question.correctOptions) ? question.correctOptions.join(',') : question.correctOptions) : null,
                   correctInteger: question.correctInteger ? parseInt(question.correctInteger) : null,
-                  marks: 4,
-                  negativeMarks: -1
+                  marks: section.marks ?? 4,
+                  negativeMarks: section.negativeMarks ?? -1
                 };
               })
             }
@@ -229,7 +233,8 @@ const updateTest = asyncHandler(async (req, res) => {
   // Calculate total marks
   let totalMarks = 0;
   parsedSections.forEach(section => {
-    totalMarks += section.questions.length * 4;
+    const sectionMarks = section.marks || 4; // Default to 4 if not specified
+    totalMarks += section.questions.length * sectionMarks;
   });
 
   // Collect image URLs for cleanup
@@ -363,9 +368,10 @@ const updateTest = asyncHandler(async (req, res) => {
             questionImage: questionImageUrl,
             solutionImage: solutionImageUrl,
             correctOption: newQuestion.correctOption || null,
+            correctOptions: newQuestion.correctOptions ? (Array.isArray(newQuestion.correctOptions) ? newQuestion.correctOptions.join(',') : newQuestion.correctOptions) : null,
             correctInteger: newQuestion.correctInteger ? parseInt(newQuestion.correctInteger) : null,
-            marks: 4,
-            negativeMarks: -1
+            marks: newSection.marks ?? 4,
+            negativeMarks: newSection.negativeMarks ?? -1
           };
 
           if (existingQuestion) {
@@ -409,6 +415,9 @@ const updateTest = asyncHandler(async (req, res) => {
           }
         }
       });
+    }, {
+      maxWait: 10000, // Maximum wait time: 10 seconds
+      timeout: 30000, // Transaction timeout: 30 seconds
     });
   });
 

@@ -11,7 +11,8 @@ const {
   getResumeRequests,
   updateQuestionTime,
   syncTimeData,
-  getTimeAnalytics
+  getTimeAnalytics,
+  recalculateMarks
 } = require('../controllers/attemptController');
 
 const router = express.Router();
@@ -26,6 +27,9 @@ router.post('/warning', updateWarningCount);
 router.put('/:id/question-time', updateQuestionTime);
 router.put('/:id/sync-times', syncTimeData);
 router.get('/:id/time-analytics', getTimeAnalytics);
+
+// Recalculate marks route (for teachers)
+router.post('/:attemptId/recalculate', recalculateMarks);
 
 // Resume permission routes (must be before /:id route)
 router.post('/request-resume', requestResume);
